@@ -4,8 +4,8 @@
    Feature: Auto-Crop (Center-Fill) for 16:9 and 9:16
 ====================================================== */
 
-const API_KEY = "AIzaSyC_6UEJhSjWUnWaXlBpHy9MYiJAWiX5EBI";
-const FOLDER_ID = "1K_S8AKSJCLvmAdoRegt3qQxmqeyLBasv";
+const API_KEY = "AIzaSyCbnQPV-ZMsmYb5Uy9gid8FvTY3GWmOk0Y";
+const FOLDER_ID = "1Fy9VfEdZzlllIn58b1rFpGJlPCYO7xNq";
 
 /* ===============================
    OPTIMIZED CHROMA KEY SHADER
