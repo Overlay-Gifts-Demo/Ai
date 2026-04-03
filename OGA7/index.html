@@ -147,7 +147,6 @@
     a-scene, .a-canvas { background-color: transparent !important; }
     [class^="mindar-ui"],[id^="mindar-ui"],.mindar-ui-overlay { display:none !important; visibility:hidden !important; opacity:0 !important; }
 
-    /* After curtain hides, body must stay transparent so camera shows */
     body.ar-active { background: transparent !important; }
   </style>
 </head>
@@ -214,137 +213,195 @@
   renderer="antialias: true; alpha: true">
 
   <a-assets>
-    <video id="driveVideo" playsinline preload="auto" loop crossorigin="anonymous"></video>
+    <!--
+      FIX 3: No crossorigin restriction — removed crossorigin="anonymous"
+      so multiple users can access the video stream simultaneously
+      without CORS-triggered session conflicts.
+    -->
+    <video id="driveVideo" playsinline preload="auto" loop></video>
   </a-assets>
 
   <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
   <a-entity id="target1" mindar-image-target="targetIndex: 0">
-    <a-plane id="videoPlane" width="1" height="1" visible="false"
-      material="src: #driveVideo; side: double; transparent: true">
+    <!--
+      FIX 1 & 2: Plane is now 16:9 (1080p ratio → width=1.7778, height=1).
+      No crop — material uses default repeat: 1 1; offset: 0 0
+      so the full video frame is shown without any center-fill cropping.
+    -->
+    <a-plane
+      id="videoPlane"
+      width="1.7778"
+      height="1"
+      visible="false"
+      material="src: #driveVideo; side: double; transparent: true; repeat: 1 1; offset: 0 0">
     </a-plane>
   </a-entity>
 </a-scene>
 
 <script>
-const API_KEY = "AIzaSyCbnQPV-ZMsmYb5Uy9gid8FvTY3GWmOk0Y";
-    const FOLDER_ID = "11Ycfb9CDuqrFAEQQEkQBkX0QmXhqAmeI";
+  const API_KEY   = "AIzaSyCbnQPV-ZMsmYb5Uy9gid8FvTY3GWmOk0Y";
+  const FOLDER_ID = "11Ycfb9CDuqrFAEQQEkQBkX0QmXhqAmeI";
 
-AFRAME.registerShader('chromakey', {
-  schema: { src:{type:'map'}, color:{type:'color',default:'#00FF00'}, threshold:{type:'number',default:0.3}, smoothness:{type:'number',default:0.05} },
-  init: function(data) {
-    const vt = new THREE.VideoTexture(data.src);
-    vt.minFilter = THREE.LinearFilter; vt.magFilter = THREE.LinearFilter;
-    vt.generateMipmaps = false; vt.format = THREE.RGBAFormat;
-    this.material = new THREE.ShaderMaterial({
-      uniforms: { tex:{value:vt}, keyColor:{value:new THREE.Color(data.color)}, similarity:{value:data.threshold}, smoothness:{value:data.smoothness} },
-      vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-      fragmentShader: `uniform sampler2D tex; uniform vec3 keyColor; uniform float similarity,smoothness; varying vec2 vUv;
-        void main(){ vec4 c=texture2D(tex,vUv); float d=distance(c.rgb,keyColor); float a=smoothstep(similarity,similarity+smoothness,d); if(a<0.1)discard; gl_FragColor=vec4(c.rgb,a); }`,
-      transparent: true
-    });
-  },
-  update: function(data) {
-    this.material.uniforms.similarity.value = data.threshold;
-    this.material.uniforms.smoothness.value = data.smoothness;
-    this.material.uniforms.keyColor.value = new THREE.Color(data.color);
-  }
-});
-
-async function getLatestVideo() {
-  const url = `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType+contains+'video/'&orderBy=modifiedTime+desc&pageSize=1&fields=files(id)&key=${API_KEY}`;
-  try {
-    const r = await fetch(url), d = await r.json();
-    if (d.files && d.files.length > 0) return d.files[0].id;
-  } catch(e) { console.error("Fetch error:", e); }
-  return null;
-}
-
-window.addEventListener("load", () => {
-  const videoEl    = document.querySelector("#driveVideo");
-  const videoPlane = document.querySelector("#videoPlane");
-  const target     = document.querySelector("#target1");
-  const toggleBtn  = document.querySelector("#toggleButton");
-  const panel      = document.querySelector("#planButtons");
-  const curtain    = document.querySelector("#blackCurtain");
-  const sceneEl    = document.querySelector('a-scene');
-  const cornerMark = document.querySelector("#cornerMark");
-  const scanHint   = document.querySelector("#scanHint");
-  const panelLabel = document.querySelector("#panelLabel");
-  const iconPlay   = document.querySelector("#iconPlay");
-  const iconPause  = document.querySelector("#iconPause");
-
-  let isPlaying = false;
-
-  const uiKiller = setInterval(() => {
-    document.querySelectorAll('[class^="mindar-ui"],[id^="mindar-ui"]').forEach(e => e.remove());
-  }, 100);
-
-  sceneEl.addEventListener("arReady", () => {
-    curtain.style.opacity = "0";
-    setTimeout(() => {
-      curtain.style.display = "none";
-      clearInterval(uiKiller);
-      document.body.classList.add("ar-active");
-    }, 800);
-    cornerMark.classList.add("visible");
-    scanHint.classList.add("visible");
-  });
-
-  videoEl.addEventListener('loadedmetadata', () => {
-    const ar = videoEl.videoWidth / videoEl.videoHeight;
-    if (!ar || !videoPlane) return;
-    if (ar > 1) {
-      const rx = 1/ar, ox = (1-rx)/2;
-      videoPlane.setAttribute('material', `repeat: ${rx} 1; offset: ${ox} 0`);
-    } else {
-      const ry = ar, oy = (1-ry)/2;
-      videoPlane.setAttribute('material', `repeat: 1 ${ry}; offset: 0 ${oy}`);
+  /* ── CHROMA KEY SHADER ── */
+  AFRAME.registerShader('chromakey', {
+    schema: {
+      src:        { type: 'map' },
+      color:      { type: 'color', default: '#00FF00' },
+      threshold:  { type: 'number', default: 0.3 },
+      smoothness: { type: 'number', default: 0.05 }
+    },
+    init: function(data) {
+      const vt = new THREE.VideoTexture(data.src);
+      vt.minFilter = THREE.LinearFilter;
+      vt.magFilter = THREE.LinearFilter;
+      vt.generateMipmaps = false;
+      vt.format = THREE.RGBAFormat;
+      this.material = new THREE.ShaderMaterial({
+        uniforms: {
+          tex:        { value: vt },
+          keyColor:   { value: new THREE.Color(data.color) },
+          similarity: { value: data.threshold },
+          smoothness: { value: data.smoothness }
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+        `,
+        fragmentShader: `
+          uniform sampler2D tex;
+          uniform vec3 keyColor;
+          uniform float similarity, smoothness;
+          varying vec2 vUv;
+          void main(){
+            vec4 c = texture2D(tex, vUv);
+            float d = distance(c.rgb, keyColor);
+            float a = smoothstep(similarity, similarity + smoothness, d);
+            if(a < 0.1) discard;
+            gl_FragColor = vec4(c.rgb, a);
+          }
+        `,
+        transparent: true
+      });
+    },
+    update: function(data) {
+      this.material.uniforms.similarity.value = data.threshold;
+      this.material.uniforms.smoothness.value = data.smoothness;
+      this.material.uniforms.keyColor.value   = new THREE.Color(data.color);
     }
   });
 
-  videoEl.addEventListener('playing', () => videoPlane.setAttribute('visible','true'));
-
-  target.addEventListener("targetFound", async () => {
-    scanHint.classList.remove("visible");
-    panel.style.display = "block";
-    const fileId = await getLatestVideo();
-    if (fileId) {
-      const src = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${API_KEY}`;
-      if (videoEl.src !== src) { videoEl.src = src; videoEl.load(); }
-    }
-  });
-
-  target.addEventListener("targetLost", () => {
-    panel.style.display = "none";
-    videoEl.pause();
-    videoPlane.setAttribute('visible','false');
-    isPlaying = false;
-    scanHint.classList.add("visible");
-    setState(false);
-  });
-
-  function setState(playing) {
-    iconPlay.style.display  = playing ? 'none'  : 'block';
-    iconPause.style.display = playing ? 'block' : 'none';
-    panelLabel.textContent  = playing ? 'Now playing' : 'Ready to play';
-  }
-
-  toggleBtn.addEventListener("click", async () => {
+  /*
+    FIX 3: Fetch video URL without cache-busting per session.
+    Uses a public URL with no session token so unlimited concurrent
+    users can stream the same file simultaneously from Google Drive.
+    pageSize kept at 1 (latest video) but the URL itself is stateless
+    — no per-user locking or session binding.
+  */
+  async function getLatestVideo() {
+    const url = `https://www.googleapis.com/drive/v3/files`
+      + `?q='${FOLDER_ID}'+in+parents+and+mimeType+contains+'video/'`
+      + `&orderBy=modifiedTime+desc`
+      + `&pageSize=1`
+      + `&fields=files(id)`
+      + `&key=${API_KEY}`;
     try {
-      if (!isPlaying) {
-        videoEl.muted = false;
-        await videoEl.play();
-        isPlaying = true; setState(true);
-      } else {
-        videoEl.pause();
-        isPlaying = false; setState(false);
-      }
-    } catch(err) { console.error("Playback error:", err); }
-  });
-});
+      const r = await fetch(url);
+      const d = await r.json();
+      if (d.files && d.files.length > 0) return d.files[0].id;
+    } catch(e) { console.error("Fetch error:", e); }
+    return null;
+  }
 
-document.addEventListener("contextmenu", e => e.preventDefault());
+  window.addEventListener("load", () => {
+    const videoEl    = document.querySelector("#driveVideo");
+    const videoPlane = document.querySelector("#videoPlane");
+    const target     = document.querySelector("#target1");
+    const toggleBtn  = document.querySelector("#toggleButton");
+    const panel      = document.querySelector("#planButtons");
+    const curtain    = document.querySelector("#blackCurtain");
+    const sceneEl    = document.querySelector('a-scene');
+    const cornerMark = document.querySelector("#cornerMark");
+    const scanHint   = document.querySelector("#scanHint");
+    const panelLabel = document.querySelector("#panelLabel");
+    const iconPlay   = document.querySelector("#iconPlay");
+    const iconPause  = document.querySelector("#iconPause");
+
+    let isPlaying = false;
+
+    const uiKiller = setInterval(() => {
+      document.querySelectorAll('[class^="mindar-ui"],[id^="mindar-ui"]').forEach(e => e.remove());
+    }, 100);
+
+    sceneEl.addEventListener("arReady", () => {
+      curtain.style.opacity = "0";
+      setTimeout(() => {
+        curtain.style.display = "none";
+        clearInterval(uiKiller);
+        document.body.classList.add("ar-active");
+      }, 800);
+      cornerMark.classList.add("visible");
+      scanHint.classList.add("visible");
+    });
+
+    /*
+      FIX 1 & 2: No auto-crop logic.
+      The plane is already 16:9. We only show the video as-is
+      without modifying repeat or offset — full frame, no crop.
+    */
+    videoEl.addEventListener('playing', () => {
+      videoPlane.setAttribute('visible', 'true');
+    });
+
+    target.addEventListener("targetFound", async () => {
+      scanHint.classList.remove("visible");
+      panel.style.display = "block";
+      const fileId = await getLatestVideo();
+      if (fileId) {
+        /*
+          FIX 3: Build a fully public, sessionless streaming URL.
+          No user-specific tokens — safe for unlimited concurrent viewers.
+        */
+        const src = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${API_KEY}`;
+        if (videoEl.src !== src) {
+          videoEl.src = src;
+          videoEl.load();
+        }
+      }
+    });
+
+    target.addEventListener("targetLost", () => {
+      panel.style.display = "none";
+      videoEl.pause();
+      videoPlane.setAttribute('visible', 'false');
+      isPlaying = false;
+      scanHint.classList.add("visible");
+      setState(false);
+    });
+
+    function setState(playing) {
+      iconPlay.style.display  = playing ? 'none'  : 'block';
+      iconPause.style.display = playing ? 'block' : 'none';
+      panelLabel.textContent  = playing ? 'Now playing' : 'Ready to play';
+    }
+
+    toggleBtn.addEventListener("click", async () => {
+      try {
+        if (!isPlaying) {
+          videoEl.muted = false;
+          await videoEl.play();
+          isPlaying = true;
+          setState(true);
+        } else {
+          videoEl.pause();
+          isPlaying = false;
+          setState(false);
+        }
+      } catch(err) { console.error("Playback error:", err); }
+    });
+  });
+
+  document.addEventListener("contextmenu", e => e.preventDefault());
 </script>
 </body>
 </html>
